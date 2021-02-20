@@ -26,40 +26,21 @@ type k8sDashboard struct {
 	Spec       *v1alpha1.DashboardSpec `json:"spec" yaml:"spec"`
 }
 
-// JSON struct: this struct has a log property, so other newly added methods can access this log
-type JSON struct {
+// Converter struct: this struct has a log property, so other newly added methods can access this log
+type Converter struct {
 	logger *zap.Logger
 }
 
-// NewJSON: new a JSON struct object with a logger object
-func NewJSON(logger *zap.Logger) *JSON {
-	return &JSON{
+// NewConverter: new a Converter struct object with a logger object
+func NewConverter(logger *zap.Logger) *Converter {
+	return &Converter{
 		logger: logger,
 	}
 }
 
-// ToYAML: this method converts to a yaml file
-func (converter *JSON) ToYAML(input io.Reader, output io.Writer, isClusterCrd bool) error {
-	dashboard, err := converter.parseInput(input, isClusterCrd)
-	if err != nil {
-		converter.logger.Error("could parse input", zap.Error(err))
-		return err
-	}
-
-	converted, err := yaml.Marshal(dashboard)
-	if err != nil {
-		converter.logger.Error("could marshall dashboard to yaml", zap.Error(err))
-		return err
-	}
-
-	_, err = output.Write(converted)
-
-	return err
-}
-
-// ToK8SManifest: this method converts to a k8s mainfest file
-func (converter *JSON) ToK8SManifest(input io.Reader, output io.Writer, isClusterCrd bool, ns string, name string) error {
-	dashboard, err := converter.parseInput(input, isClusterCrd)
+// ConvertKubsphereDashboard: this method converts to a k8s mainfest file
+func (converter *Converter) ConvertKubsphereDashboard(input io.Reader, output io.Writer, isClusterCrd bool, ns string, name string) error {
+	dashboard, err := converter.convert(input, isClusterCrd)
 	if err != nil {
 		converter.logger.Error("could parse input", zap.Error(err))
 		return err
@@ -72,13 +53,19 @@ func (converter *JSON) ToK8SManifest(input io.Reader, output io.Writer, isCluste
 		kind = "ClusterDashboard"
 	}
 
+	metadata := make(map[string]string)
 	if ns == "" {
 		ns = "default"
 	}
+	if !isClusterCrd {
+		metadata["namespace"] = ns
+	}
+	metadata["name"] = name
+
 	manifest := k8sDashboard{
 		APIVersion: apiVersion,
 		Kind:       kind,
-		Metadata:   map[string]string{"name": name, "namespace": ns},
+		Metadata:   metadata,
 		Spec:       dashboard,
 	}
 
@@ -93,8 +80,8 @@ func (converter *JSON) ToK8SManifest(input io.Reader, output io.Writer, isCluste
 	return err
 }
 
-// parseInput: this method reads a input json file, then extract needed fields to the yaml model
-func (converter *JSON) parseInput(input io.Reader, isClusterCrd bool) (*v1alpha1.DashboardSpec, error) {
+// convert: this method reads a input Converter file, then extract needed fields to the yaml model
+func (converter *Converter) convert(input io.Reader, isClusterCrd bool) (*v1alpha1.DashboardSpec, error) {
 	content, err := ioutil.ReadAll(input)
 	if err != nil {
 		converter.logger.Error("could not read input", zap.Error(err))
@@ -126,7 +113,7 @@ func (converter *JSON) parseInput(input io.Reader, isClusterCrd bool) (*v1alpha1
 }
 
 // convert GeneralSettings
-func (converter *JSON) convertGeneralSettings(board *sdk.Board, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertGeneralSettings(board *sdk.Board, dashboard *v1alpha1.DashboardSpec) {
 	dashboard.Title = board.Title
 	dashboard.Editable = board.Editable
 	dashboard.SharedCrosshair = board.SharedCrosshair
@@ -141,7 +128,7 @@ func (converter *JSON) convertGeneralSettings(board *sdk.Board, dashboard *v1alp
 }
 
 // convert Annotations
-func (converter *JSON) convertAnnotations(annotations []sdk.Annotation, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertAnnotations(annotations []sdk.Annotation, dashboard *v1alpha1.DashboardSpec) {
 	for _, annotation := range annotations {
 		// grafana-sdk doesn't expose the "builtIn" field, so we work around that by skipping
 		// the annotation we know to be built-in by its name
@@ -182,7 +169,7 @@ func (converter *JSON) convertAnnotations(annotations []sdk.Annotation, dashboar
 }
 
 // convert diferent variables
-func (converter *JSON) convertVariables(variables []sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertVariables(variables []sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
 	for _, variable := range variables {
 		switch variable.Type {
 		case "interval":
@@ -202,7 +189,7 @@ func (converter *JSON) convertVariables(variables []sdk.TemplateVar, dashboard *
 }
 
 // convert interval variables
-func (converter *JSON) convertIntervalVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertIntervalVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
 	interval := templatingsModel.TemplateVar{
 		Name:    variable.Name,
 		Type:    variable.Type,
@@ -219,7 +206,7 @@ func (converter *JSON) convertIntervalVar(variable sdk.TemplateVar, dashboard *v
 }
 
 // convert custom variables
-func (converter *JSON) convertCustomVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertCustomVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
 	custom := templatingsModel.TemplateVar{
 		Name:       variable.Name,
 		Label:      variable.Label,
@@ -238,7 +225,7 @@ func (converter *JSON) convertCustomVar(variable sdk.TemplateVar, dashboard *v1a
 }
 
 // convert query variables
-func (converter *JSON) convertQueryVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertQueryVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
 	datasource := ""
 	if variable.Datasource != nil {
 		datasource = *variable.Datasource
@@ -260,7 +247,7 @@ func (converter *JSON) convertQueryVar(variable sdk.TemplateVar, dashboard *v1al
 }
 
 // convert datasource variables
-func (converter *JSON) convertDatasourceVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertDatasourceVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
 	datasource := templatingsModel.TemplateVar{
 		Name:       variable.Name,
 		Label:      variable.Label,
@@ -274,7 +261,7 @@ func (converter *JSON) convertDatasourceVar(variable sdk.TemplateVar, dashboard 
 }
 
 // convert const variables
-func (converter *JSON) convertConstVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
+func (converter *Converter) convertConstVar(variable sdk.TemplateVar, dashboard *v1alpha1.DashboardSpec) {
 	text, _ := variable.Current.Text.(string)
 	constant := templatingsModel.TemplateVar{
 		Name:      variable.Name,
@@ -292,7 +279,7 @@ func (converter *JSON) convertConstVar(variable sdk.TemplateVar, dashboard *v1al
 }
 
 //convert rows
-func (converter *JSON) convertPanels(panels []*sdk.Panel, dashboard *v1alpha1.DashboardSpec, isClusterCrd bool) {
+func (converter *Converter) convertPanels(panels []*sdk.Panel, dashboard *v1alpha1.DashboardSpec, isClusterCrd bool) {
 
 	for _, panel := range panels {
 		if panel.Type == "row" {
@@ -313,7 +300,7 @@ func (converter *JSON) convertPanels(panels []*sdk.Panel, dashboard *v1alpha1.Da
 }
 
 //convert rows
-func (converter *JSON) convertRows(rows []*sdk.Row, dashboard *v1alpha1.DashboardSpec, isClusterCrd bool) {
+func (converter *Converter) convertRows(rows []*sdk.Row, dashboard *v1alpha1.DashboardSpec, isClusterCrd bool) {
 
 	for _, row := range rows {
 		if row == nil {
@@ -333,7 +320,7 @@ func (converter *JSON) convertRows(rows []*sdk.Row, dashboard *v1alpha1.Dashboar
 }
 
 // convert different types of the given panel
-func (converter *JSON) convertDataPanel(panel sdk.Panel, isClusterCrd bool) (panelsModel.Panel, bool) {
+func (converter *Converter) convertDataPanel(panel sdk.Panel, isClusterCrd bool) (panelsModel.Panel, bool) {
 	switch panel.Type {
 	case "graph":
 		return converter.convertGraph(panel, isClusterCrd), true
@@ -354,7 +341,7 @@ func (converter *JSON) convertDataPanel(panel sdk.Panel, isClusterCrd bool) (pan
 }
 
 // a graph panel
-func (converter *JSON) convertGraph(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
+func (converter *Converter) convertGraph(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
 	// filled with values of the given fields
 	var decimals int64
 	if panel.GraphPanel.Decimals != nil {
@@ -384,7 +371,7 @@ func (converter *JSON) convertGraph(panel sdk.Panel, isClusterCrd bool) panelsMo
 	// converts target
 	if panel.GraphPanel.Targets != nil && len(panel.GraphPanel.Targets) > 0 {
 		for index, target := range panel.GraphPanel.Targets {
-			graphTarget := converter.convertTarget(target, isClusterCrd, index, panel.Type)
+			graphTarget := converter.convertTarget(target, index)
 			if graphTarget == nil {
 				continue
 			}
@@ -412,7 +399,7 @@ func (converter *JSON) convertGraph(panel sdk.Panel, isClusterCrd bool) panelsMo
 	return *graph
 }
 
-func (converter *JSON) convertLegend(sdkLegend sdk.Legend) []string {
+func (converter *Converter) convertLegend(sdkLegend sdk.Legend) []string {
 	var legend []string
 
 	if !sdkLegend.Show {
@@ -450,7 +437,7 @@ func (converter *JSON) convertLegend(sdkLegend sdk.Legend) []string {
 }
 
 // singlestat panel
-func (converter *JSON) convertSingleStat(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
+func (converter *Converter) convertSingleStat(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
 	singleStat := &panelsModel.Panel{
 		Title:       panel.Title,
 		Id:          panelSpan(panel),
@@ -500,7 +487,7 @@ func (converter *JSON) convertSingleStat(panel sdk.Panel, isClusterCrd bool) pan
 	// handles targets
 	if panel.SinglestatPanel.Targets != nil && len(panel.SinglestatPanel.Targets) > 0 {
 		for index, target := range panel.SinglestatPanel.Targets {
-			graphTarget := converter.convertTarget(target, isClusterCrd, index, panel.Type)
+			graphTarget := converter.convertTarget(target, index)
 			if graphTarget == nil {
 				continue
 			}
@@ -525,7 +512,7 @@ func (converter *JSON) convertSingleStat(panel sdk.Panel, isClusterCrd bool) pan
 }
 
 // gauge
-func (converter *JSON) convertCustom(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
+func (converter *Converter) convertCustom(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
 	// set options
 	customPanel := &panelsModel.Panel{
 		Decimals: 0,
@@ -550,7 +537,7 @@ func (converter *JSON) convertCustom(panel sdk.Panel, isClusterCrd bool) panelsM
 	}
 
 	for index, target := range targets {
-		t := converter.convertTarget(target, isClusterCrd, index, panel.Type)
+		t := converter.convertTarget(target, index)
 		customPanel.Targets = append(customPanel.Targets, *t)
 	}
 
@@ -558,7 +545,7 @@ func (converter *JSON) convertCustom(panel sdk.Panel, isClusterCrd bool) panelsM
 }
 
 // bar gauge
-func (converter *JSON) convertBarGauge(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
+func (converter *Converter) convertBarGauge(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
 	// set options
 	barGaugePanel := &panelsModel.Panel{
 		Options: &panelsModel.BarGaugeOptions{
@@ -582,7 +569,7 @@ func (converter *JSON) convertBarGauge(panel sdk.Panel, isClusterCrd bool) panel
 	// handles targets
 	if panel.BarGaugePanel.Targets != nil && len(panel.BarGaugePanel.Targets) > 0 {
 		for index, target := range panel.BarGaugePanel.Targets {
-			barGaugeTarget := converter.convertTarget(target, isClusterCrd, index, panel.Type)
+			barGaugeTarget := converter.convertTarget(target, index)
 			if barGaugeTarget == nil {
 				continue
 			}
@@ -596,7 +583,7 @@ func (converter *JSON) convertBarGauge(panel sdk.Panel, isClusterCrd bool) panel
 }
 
 // converts a table panel
-func (converter *JSON) convertTable(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
+func (converter *Converter) convertTable(panel sdk.Panel, isClusterCrd bool) panelsModel.Panel {
 	tablePanel := &panelsModel.Panel{
 		Title:       panel.Title,
 		Id:          panelSpan(panel),
@@ -617,7 +604,7 @@ func (converter *JSON) convertTable(panel sdk.Panel, isClusterCrd bool) panelsMo
 
 	if panel.TablePanel.Targets != nil && len(panel.TablePanel.Targets) > 0 {
 		for index, target := range panel.TablePanel.Targets {
-			graphTarget := converter.convertTarget(target, isClusterCrd, index, panel.Type)
+			graphTarget := converter.convertTarget(target, index)
 			if graphTarget == nil {
 				continue
 			}
@@ -638,7 +625,7 @@ func (converter *JSON) convertTable(panel sdk.Panel, isClusterCrd bool) panelsMo
 }
 
 // converts a text panel
-func (converter *JSON) convertText(panel sdk.Panel) panelsModel.Panel {
+func (converter *Converter) convertText(panel sdk.Panel) panelsModel.Panel {
 	textPanel := &panelsModel.Panel{
 		Title:       panel.Title,
 		Id:          panelSpan(panel),
@@ -662,13 +649,13 @@ func (converter *JSON) convertText(panel sdk.Panel) panelsModel.Panel {
 	return *textPanel
 }
 
-func (converter *JSON) convertTarget(target sdk.Target, isClusterCrd bool, index int, tp string) *panelsModel.Target {
+func (converter *Converter) convertTarget(target sdk.Target, index int) *panelsModel.Target {
 	// looks like a prometheus target
 	converter.logger.Info("Only supported target type: prometheus", zap.Any("target", target))
-	return converter.convertPrometheusTarget(target, isClusterCrd, index, tp)
+	return converter.convertPrometheusTarget(target, index)
 }
 
-func (converter *JSON) convertPrometheusTarget(target sdk.Target, isClusterCrd bool, index int, tp string) *panelsModel.Target {
+func (converter *Converter) convertPrometheusTarget(target sdk.Target, index int) *panelsModel.Target {
 	t := &panelsModel.Target{
 		// RefID: target.RefID,
 		RefID:          int64(index) + 1,
@@ -682,13 +669,13 @@ func (converter *JSON) convertPrometheusTarget(target sdk.Target, isClusterCrd b
 	}
 
 	// adjusts the query expression to adapt to the ks cluster
-	transfered := transferExpr(target.Expr, isClusterCrd, tp)
-	if transfered == "" {
+	converedExpr := convertExpr(target.Expr)
+	if converedExpr == "" {
 		t.Expression = target.Expr
 		return t
 	}
 
-	t.Expression = fmt.Sprintf("%s", transfered)
+	t.Expression = fmt.Sprintf("%s", converedExpr)
 	t.Step = toString(target.Step)
 	return t
 
@@ -759,9 +746,7 @@ func defaultColors() []string {
 	return []string{"#60acfc", "#23c2db", "#64d5b2", "#d5ec5a", "#ffb64e", "#fb816d", "#d15c7f"}
 }
 
-func transferExpr(expr string, isClusterCrd bool, tp string) string {
-	// example: sum (elasticsearch_jvm_memory_used_bytes{cluster="$cluster",name=~"$name"})/ sum (elasticsearch_jvm_memory_max_bytes{cluster="$cluster",name=~"$name"})
-	// transfer to: sum by(cluster,name)  (elasticsearch_jvm_memory_used_bytes) / sum by(cluster,name)  (elasticsearch_jvm_memory_max_bytes) * 100
+func convertExpr(expr string) string {
 
 	// free the door if don't match a `[{}]` regex style
 	pat := regexp.MustCompile(`[\{\}]`)
@@ -774,10 +759,10 @@ func transferExpr(expr string, isClusterCrd bool, tp string) string {
 		expr = pat1.ReplaceAllString(expr, "3m")
 	}
 	// if contains sum func, it can be divided by a flag(`isCluterCrd`) to distinguish with what kind of the resource
-	pat2 := regexp.MustCompile(`sum\s+(\(\w+\{.*?\}\))`)
-	if matchSum := pat2.Match([]byte(expr)); matchSum {
-		return transferSumFunc(strings.TrimPrefix(expr, " "), isClusterCrd, tp)
-	}
+	// pat2 := regexp.MustCompile(`sum\s+(\(\w+\{.*?\}\))`)
+	// if matchSum := pat2.Match([]byte(expr)); matchSum {
+	// 	return convertSumFunc(strings.TrimPrefix(expr, " "))
+	// }
 
 	// if contains irate/rate/count func, just removes `\{.*\}`
 	pat3 := regexp.MustCompile(`\{.*?\}`)
@@ -794,19 +779,25 @@ func transferExpr(expr string, isClusterCrd bool, tp string) string {
 }
 
 // convert sum func query to normal query which can be visualized
-func transferSumFunc(expr string, isClusterCrd bool, tp string) string {
+// example: sum (elasticsearch_jvm_memory_used_bytes{cluster="$cluster",name=~"$name"})/ sum (elasticsearch_jvm_memory_max_bytes{cluster="$cluster",name=~"$name"})
+// transfer to: sum by(name) (elasticsearch_jvm_memory_used_bytes) / sum by(name)  (elasticsearch_jvm_memory_max_bytes) * 100
+// removed
+func convertSumFunc(expr string) string {
 	pat := regexp.MustCompile(`\s+(\(\w+\{.*?\}\))`)
 	f := func(s string) string {
-		var trueByNames string
+		var trueByNames []string
 		params := regexp.MustCompile(`[\{\}]`).Split(s, -1)
 		variable, byNameRaw := params[0], params[1]
 		byNames := regexp.MustCompile(`(\w+)=`).FindAllString(byNameRaw, -1)
-		if isClusterCrd || tp == "singlestat" {
-			trueByNames = "cluster"
-		} else {
-			trueByNames = strings.ReplaceAll(strings.Join(byNames, ","), "=", "")
+		if len(byNames) == 0 {
+			return fmt.Sprintf(" %s)", variable)
 		}
-		return fmt.Sprintf(" by(%s) %s)", trueByNames, variable)
+		for _, byName := range byNames {
+			if byName != "cluster" {
+				trueByNames = append(trueByNames, byName)
+			}
+		}
+		return fmt.Sprintf(" by(%s) %s)", strings.ReplaceAll(strings.Join(byNames, ","), "=", ""), variable)
 	}
 
 	return pat.ReplaceAllStringFunc(expr, f)
